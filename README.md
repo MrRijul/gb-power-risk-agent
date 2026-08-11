@@ -1,0 +1,158 @@
+# GB Power Imbalance Risk Agent
+
+This project estimates whether the GB electricity system is likely to be short in each settlement period tomorrow.
+
+The first two notebooks build a point-in-time history from Elexon. The third notebook trains a transparent benchmark and a nonlinear probability model, then evaluates them on a later year.
+
+## Current files
+
+```text
+01_build_project.ipynb   First data pull and leakage audit
+02_build_history.ipynb   Clock-change test and historical downloader
+03_train_model.ipynb     Chronological model training and evaluation
+tools.py                 Data checks, prediction, scenarios and model card
+agent.py                 One local Ollama tool-calling agent
+requirements.txt         Packages needed to run the notebook
+README.md                This explanation
+```
+
+The notebooks create:
+
+- `seven_day_sample.csv` after Step 1 passes
+- `dst_audit_sample.csv` after the Step 2 test passes
+- `power_history_raw.csv` with the full expected historical schedule
+- `excluded_dates.csv` documenting dates with incomplete source data
+- `power_history.csv` containing the historical schedule
+- `power_risk_model.joblib` containing the fitted model and benchmark
+- `model_metrics.csv` containing validation and test results
+- `test_predictions.csv` containing the untouched 2025 predictions
+- `feature_importance.csv` containing the model explanation
+
+The included test run produced:
+
+- 336 settlement periods
+- 0 duplicate keys
+- 0 missing critical values
+- 0 forecasts published after the cutoff
+- 59.52% of settlement periods classified as system short
+
+## Setup on Windows
+
+Open a terminal inside this folder and run:
+
+```powershell
+py -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Open the folder in VS Code. Select **Python (GB Power Risk)** as the notebook kernel. Open `01_build_project.ipynb` and run the cells from top to bottom. Once it prints PASS, do the same with `02_build_history.ipynb`.
+
+Leave `RUN_FULL_HISTORY = False` for the first Step 2 run. It downloads 14 dates around the two 2025 clock changes. The expected result is:
+
+```text
+PASS: settlement dates, clock changes and publication cutoffs are correct.
+```
+
+That test produces 672 rows: one 46-period day, one 50-period day and twelve normal 48-period days.
+
+After it passes, change this line in the Step 2 settings cell:
+
+```python
+RUN_FULL_HISTORY = True
+```
+
+Run the notebook again to create the 2022 to 2025 model history. Completed monthly chunks are stored in `cache`, so the download can resume after an interruption.
+
+The audited full run found four dates with incomplete forecast features and ten isolated rows with missing outcomes. Nothing is filled. Step 3 applies the exclusion log again, removes the four feature-outage dates in full, and removes the ten rows without a target. This leaves 69,926 modelling observations. The live agent will abstain whenever a required forecast is unavailable.
+
+## Step 3: train the model
+
+Keep these three files in the same folder:
+
+```text
+03_train_model.ipynb
+power_history.csv
+excluded_dates.csv
+```
+
+Run this once after downloading the updated requirements:
+
+```powershell
+pip install -r requirements.txt
+```
+
+Then open `03_train_model.ipynb`, select the same project kernel, and use **Run All**.
+
+The time split is fixed:
+
+- 2022 to 2023 for training
+- 2024 for choosing between the models
+- 2025 as the untouched final test
+
+The included run selected Extra Trees over logistic regression. On 2025 it produced:
+
+- AUC: 0.632
+- Brier score: 0.235, compared with 0.250 for a constant forecast
+- Brier improvement over the constant forecast: 5.7%
+- Observed short-system rate: 24.4% in the lowest-risk decile and 65.8% in the highest-risk decile
+
+This is a moderate risk signal. It is not presented as a trading strategy or proof of profit.
+
+## What the notebook checks
+
+- 48 settlement periods per normal day
+- No duplicate date and settlement-period keys
+- No missing demand, wind, indicated imbalance, margin or outcome values
+- Every forecast publication timestamp is before the 16:00 London cutoff on the previous day
+- The target is created only from realised Net Imbalance Volume
+- Clock-change days contain the correct 46 or 50 settlement periods
+- Every source agrees with Elexon's settlement-date and settlement-period key
+
+The target is:
+
+```python
+system_short = net_imbalance_volume > 0
+```
+
+Positive Net Imbalance Volume means the GB system was short.
+
+## Data source
+
+The data come from the public Elexon Insights API. No API key is required.
+
+- Developer portal: https://developer.data.elexon.co.uk/
+- System price explanation: https://bmrs.elexon.co.uk/system-prices
+
+## Step 4: run the local agent
+
+Install the Ollama desktop application, then download the local model once:
+
+```powershell
+ollama pull qwen3:8b
+```
+
+Make sure the model, data and Python files are in the same folder:
+
+```text
+power_risk_model.joblib
+power_history.csv
+excluded_dates.csv
+model_metrics.csv
+tools.py
+agent.py
+```
+
+Run the agent from the VS Code terminal:
+
+```powershell
+python agent.py
+```
+
+You can also give it a question directly:
+
+```powershell
+python agent.py "Assess tomorrow and run the demand-up scenario."
+```
+
+The local LLM chooses which tools are needed. Python enforces the order, performs every calculation, stops on missing or late data, and renders the final numbers from structured results. The agent saves its complete tool sequence in `agent_audit.json`.

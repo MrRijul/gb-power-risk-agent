@@ -1,0 +1,22 @@
+# Local Python environment
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Downloaded API data
+cache/
+power_history.csv
+power_history_raw.csv
+seven_day_sample.csv
+dst_audit_sample.csv
+test_predictions.csv
+
+# Runtime outputs
+agent_audit.json
+
+# Secrets
+.env
+.streamlit/secrets.toml
+
+outputs/
