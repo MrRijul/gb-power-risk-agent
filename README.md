@@ -1,10 +1,26 @@
 # GB Power Imbalance Risk Agent
+I built this project to explore a practical question: using only information available at 16:00 on the previous day, can public Elexon forecasts help identify which GB settlement periods are more likely to be short?
 
-This project estimates whether the GB electricity system is likely to be short in each settlement period tomorrow.
+Future iterations will build on this to estimate the magnitude of imbalance. Currently, this just calculates probabilities of imbalance in the system.
+
+Section "Method and File Guide" in this README details how to set this up locally. For a quick overview of its use cases, you may use the link provided below:
+
+
+## Project Summary
+
+The model combines demand, wind generation, system margin, indicated imbalance and time-of-day information. I chose an Extremely Randomized Trees classifier because these variables are likely to interact in nonlinear ways. I also required at least 100 observations in every terminal leaf to reduce the risk of fitting narrow, unstable half-hour patterns.
+
+I trained the candidate models on 2022–2023, used 2024 to select between Extra Trees and penalised logistic regression, and kept 2025 untouched for the final out-of-sample test.
+
+On the 2025 test set, Extra Trees achieved an AUC of 0.632 and improved the Brier score by 5.7% relative to a constant probability forecast. This is a useful but moderate forecasting result, the main purpose of the project is to show how an agentic layer turns the model into a repeatable research workflow. 
+
+The agent can check whether the data was genuinely available at the forecast cutoff (to avoid lookahead bias), runs the model while allowing for scenario analysis, compares historical forecasts with realised outcomes, and records every tool call in an audit trace. The language model coordinates the workflow, while deterministic Python produces every calculation.
+
+## Method and File Guide (USEFUL FOR LOCAL SETUP/REBUILDING)
 
 The first two notebooks build a point-in-time history from Elexon. The third notebook trains a transparent benchmark and a nonlinear probability model, then evaluates them on a later year.
 
-## Current files
+### Current files
 
 ```text
 01_build_project.ipynb   First data pull and leakage audit
@@ -37,7 +53,7 @@ The included test run produced:
 - 0 forecasts published after the cutoff
 - 59.52% of settlement periods classified as system short
 
-## Setup on Windows
+### Setup on Windows
 
 Open a terminal inside this folder and run:
 
@@ -67,7 +83,7 @@ Run the notebook again to create the 2022 to 2025 model history. Completed month
 
 The audited full run found four dates with incomplete forecast features and ten isolated rows with missing outcomes. Nothing is filled. Step 3 applies the exclusion log again, removes the four feature-outage dates in full, and removes the ten rows without a target. This leaves 69,926 modelling observations. The live agent will abstain whenever a required forecast is unavailable.
 
-## Step 3: train the model
+### Step 3: train the model
 
 Keep these three files in the same folder:
 
@@ -118,14 +134,14 @@ system_short = net_imbalance_volume > 0
 
 Positive Net Imbalance Volume means the GB system was short.
 
-## Data source
+#### Data source
 
 The data come from the public Elexon Insights API. No API key is required.
 
 - Developer portal: https://developer.data.elexon.co.uk/
 - System price explanation: https://bmrs.elexon.co.uk/system-prices
 
-## Step 4: run the local agent
+### Step 4: run the local agent
 
 Install the Ollama desktop application, then download the local model once:
 
