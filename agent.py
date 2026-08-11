@@ -402,6 +402,8 @@ def run_agent(question: str, chat_function=None) -> tuple[str, dict]:
             try:
                 if provider == "groq":
                     arguments = json.loads(call.function.arguments or "{}")
+                    if arguments is None:
+                        arguments = {}
                 else:
                     arguments = dict(call.function.arguments or {})
                 if not isinstance(arguments, dict):
