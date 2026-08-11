@@ -3,8 +3,8 @@ I built this project to explore a practical question: using only information ava
 
 Future iterations will build on this to estimate the magnitude of imbalance. Currently, this just calculates probabilities of imbalance in the system.
 
-Section "Method and File Guide" in this README details how to set this up locally. For a quick overview of its use cases, you may use the link provided below:
-
+Section "Method and File Guide" in this README details how to set this up locally. For an online overview of its use cases, you may use the link provided below:
+https://gb-power-risk-agent.streamlit.app/
 
 ## Project Summary
 
