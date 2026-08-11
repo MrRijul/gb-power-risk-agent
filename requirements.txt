@@ -6,3 +6,4 @@ matplotlib>=3.9
 joblib>=1.4
 ipykernel>=6.29
 ollama>=0.6.2
+streamlit>=1.42,<2

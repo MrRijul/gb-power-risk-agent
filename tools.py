@@ -562,11 +562,29 @@ def predict_risk(target_date: str, validation_id: str) -> dict:
                 float(predictions["champion_probability"].min()) * 100, 1
             ),
         }
+        period_predictions = [
+            {
+                "settlement_period": int(row["settlementPeriod"]),
+                "start_time_local": (
+                    pd.Timestamp(row["startTime"])
+                    .tz_convert(LONDON)
+                    .strftime("%Y-%m-%d %H:%M %Z")
+                ),
+                "short_probability_pct": round(
+                    float(row["champion_probability"]) * 100,
+                    1,
+                ),
+                "daily_risk_rank": int(row["daily_risk_rank"]),
+            }
+            for _, row in predictions.sort_values(
+                "settlementPeriod"
+            ).iterrows()
+        ]        
         payload = {
             "validation_id": validation_id,
             "model_id": record["result"]["model_id"],
             "summary": summary,
-        }
+            }
         prediction_id = _result_id("prediction", payload)
         result = {
             "tool": "predict_risk",
@@ -580,6 +598,7 @@ def predict_risk(target_date: str, validation_id: str) -> dict:
             "trained_through": bundle["trained_through"],
             "period_count": len(predictions),
             "summary": summary,
+            "period_predictions": period_predictions,            
             "highest_risk_periods": [
                 _period_record(row, daily_medians)
                 for _, row in top_periods.iterrows()
@@ -601,93 +620,193 @@ def predict_risk(target_date: str, validation_id: str) -> dict:
             "reason": str(error),
         }
 
-
-def run_scenario(prediction_id: str, scenario: str) -> dict:
-    """Run one fixed whole-day stress scenario.
-
-    Args:
-        prediction_id: Identifier returned by predict_risk.
-        scenario: demand_up_5pct, wind_down_20pct, margin_down_10pct,
-            selected from the fixed scenario list.
-
-    Returns:
-        Baseline and scenario probability changes from deterministic Python.
-    """
+def run_scenario(
+    prediction_id: str,
+    scenario: str = "custom",
+    demand_change_pct: float = 0.0,
+    wind_change_pct: float = 0.0,
+    margin_change_mw: float = 0.0,
+) -> dict:
+    """Run one bounded whole-day model sensitivity."""
     try:
-        if scenario not in SCENARIOS:
-            raise ValueError(
-                f"scenario must be one of {sorted(SCENARIOS)}"
-            )
         record = _STATE["predictions"].get(prediction_id)
+
         if record is None:
-            raise ValueError("Unknown prediction_id. Call predict_risk first")
+            raise ValueError(
+                "Unknown prediction_id. Call predict_risk first"
+            )
+
+        if scenario != "custom":
+            raise ValueError("scenario must be custom")
+
+        demand_change_pct = float(demand_change_pct)
+        wind_change_pct = float(wind_change_pct)
+        margin_change_mw = float(margin_change_mw)
+
+        if not -10 <= demand_change_pct <= 10:
+            raise ValueError(
+                "demand_change_pct must be between -10 and 10"
+            )
+
+        if not -30 <= wind_change_pct <= 30:
+            raise ValueError(
+                "wind_change_pct must be between -30 and 30"
+            )
+
+        if not -2000 <= margin_change_mw <= 2000:
+            raise ValueError(
+                "margin_change_mw must be between -2000 and 2000"
+            )
 
         bundle = _load_bundle()
         scenario_frame = record["base_frame"].copy()
-        for variable, multiplier in SCENARIOS[scenario].items():
-            scenario_frame[variable] = scenario_frame[variable] * multiplier
+
+        assumptions = {
+            "demand_change_pct": demand_change_pct,
+            "wind_change_pct": wind_change_pct,
+            "margin_change_mw": margin_change_mw,
+        }
+
+        scenario_frame["demand"] *= (
+            1 + demand_change_pct / 100
+        )
+        scenario_frame["generation"] *= (
+            1 + wind_change_pct / 100
+        )
+        scenario_frame["margin"] += margin_change_mw
 
         if (scenario_frame["demand"] <= 0).any():
-            raise ValueError("Scenario produces non-positive demand")
+            raise ValueError(
+                "Scenario produces non-positive demand"
+            )
+
         if (scenario_frame["generation"] < 0).any():
-            raise ValueError("Scenario produces negative wind generation")
+            raise ValueError(
+                "Scenario produces negative wind generation"
+            )
 
         features = construct_model_features(scenario_frame)
-        scenario_probability = bundle["champion_model"].predict_proba(
-            features[bundle["features"]]
-        )[:, 1]
-        comparison = record["frame"][KEYS + ["champion_probability"]].copy()
-        comparison["scenario_probability"] = scenario_probability
+
+        scenario_probability = (
+            bundle["champion_model"]
+            .predict_proba(features[bundle["features"]])[:, 1]
+        )
+
+        comparison = record["frame"][
+            KEYS + ["champion_probability"]
+        ].copy()
+
+        comparison["scenario_probability"] = (
+            scenario_probability
+        )
+
         comparison["change_pp"] = (
             comparison["scenario_probability"]
             - comparison["champion_probability"]
         ) * 100
+
         most_changed = comparison.reindex(
-            comparison["change_pp"].abs().sort_values(ascending=False).index
+            comparison["change_pp"]
+            .abs()
+            .sort_values(ascending=False)
+            .index
         ).head(6)
 
-        period_results = []
-        for _, row in most_changed.iterrows():
-            period_results.append({
-                "settlement_period": int(row["settlementPeriod"]),
+        period_results = [
+            {
+                "settlement_period": int(
+                    row["settlementPeriod"]
+                ),
                 "baseline_probability_pct": round(
-                    float(row["champion_probability"]) * 100, 1
+                    float(row["champion_probability"]) * 100,
+                    1,
                 ),
                 "scenario_probability_pct": round(
-                    float(row["scenario_probability"]) * 100, 1
+                    float(row["scenario_probability"]) * 100,
+                    1,
                 ),
-                "change_pp": round(float(row["change_pp"]), 1),
-            })
+                "change_pp": round(
+                    float(row["change_pp"]),
+                    1,
+                ),
+            }
+            for _, row in comparison.sort_values(
+                "settlementPeriod"
+            ).iterrows()
+        ]
 
-        result = {
+        most_changed_periods = [
+            {
+                "settlement_period": int(
+                    row["settlementPeriod"]
+                ),
+                "baseline_probability_pct": round(
+                    float(row["champion_probability"]) * 100,
+                    1,
+                ),
+                "scenario_probability_pct": round(
+                    float(row["scenario_probability"]) * 100,
+                    1,
+                ),
+                "change_pp": round(
+                    float(row["change_pp"]),
+                    1,
+                ),
+            }
+            for _, row in most_changed.iterrows()
+        ]
+
+        return {
             "tool": "run_scenario",
             "status": "READY_FOR_HUMAN_REVIEW",
             "result_id": _result_id(
                 "scenario",
-                {"prediction_id": prediction_id, "scenario": scenario},
+                {
+                    "prediction_id": prediction_id,
+                    "scenario": scenario,
+                    "assumptions": assumptions,
+                },
             ),
             "prediction_id": prediction_id,
             "scenario": scenario,
-            "assumptions": SCENARIOS[scenario],
+            "assumptions": assumptions,
             "summary": {
                 "baseline_mean_probability_pct": round(
-                    float(comparison["champion_probability"].mean()) * 100, 1
+                    float(
+                        comparison[
+                            "champion_probability"
+                        ].mean()
+                    ) * 100,
+                    1,
                 ),
                 "scenario_mean_probability_pct": round(
-                    float(comparison["scenario_probability"].mean()) * 100, 1
+                    float(
+                        comparison[
+                            "scenario_probability"
+                        ].mean()
+                    ) * 100,
+                    1,
                 ),
-                "mean_change_pp": round(float(comparison["change_pp"].mean()), 1),
+                "mean_change_pp": round(
+                    float(comparison["change_pp"].mean()),
+                    1,
+                ),
                 "maximum_absolute_change_pp": round(
-                    float(comparison["change_pp"].abs().max()), 1
+                    float(
+                        comparison["change_pp"].abs().max()
+                    ),
+                    1,
                 ),
             },
-            "most_changed_periods": period_results,
+            "period_results": period_results,
+            "most_changed_periods": most_changed_periods,
             "method_note": (
-                "This is a fixed model stress with all other forecasts held "
-                "constant. It is not a new market forecast."
+                "This is a bounded model sensitivity with "
+                "all other forecasts held constant. "
+                "It is not a new market forecast."
             ),
         }
-        return result
+
     except Exception as error:
         return {
             "tool": "run_scenario",
@@ -697,6 +816,206 @@ def run_scenario(prediction_id: str, scenario: str) -> dict:
             "reason": str(error),
         }
 
+def compare_with_actuals(prediction_id: str) -> dict:
+    """Compare predicted probabilities with realised Elexon outcomes."""
+
+    try:
+        record = _STATE["predictions"].get(prediction_id)
+
+        if record is None:
+            raise ValueError(
+                "Unknown prediction_id. Call predict_risk first"
+            )
+
+        target_date = record["result"]["target_date"]
+        parsed_date = _parse_date(target_date)
+
+        if parsed_date >= datetime.now(LONDON).date():
+            raise ValueError(
+                "Actual outcomes are only available for completed dates"
+            )
+
+        url = (
+            f"{BASE_URL}/balancing/settlement/"
+            f"system-prices/{target_date}"
+        )
+
+        payload = _get_json(url, timeout=60)
+        actuals = pd.DataFrame(payload.get("data", []))
+
+        required_columns = {
+            "settlementPeriod",
+            "startTime",
+            "netImbalanceVolume",
+        }
+
+        if actuals.empty:
+            raise ValueError("No realised outcomes were returned")
+
+        if not required_columns.issubset(actuals.columns):
+            raise ValueError("The realised outcome data are incomplete")
+
+        actuals["settlementDate"] = target_date
+
+        actuals["settlementPeriod"] = pd.to_numeric(
+            actuals["settlementPeriod"],
+            errors="coerce",
+        ).astype("Int64")
+
+        actuals["netImbalanceVolume"] = pd.to_numeric(
+            actuals["netImbalanceVolume"],
+            errors="coerce",
+        )
+
+        actuals["outcome_start_time"] = pd.to_datetime(
+            actuals["startTime"],
+            utc=True,
+            errors="coerce",
+        )
+
+        if actuals.duplicated(KEYS).any():
+            raise ValueError("Duplicate realised settlement periods found")
+
+        predictions = record["frame"][
+            KEYS + ["startTime", "champion_probability"]
+        ].copy()
+
+        comparison = predictions.merge(
+            actuals[
+                KEYS
+                + ["outcome_start_time", "netImbalanceVolume"]
+            ],
+            on=KEYS,
+            how="left",
+            validate="one_to_one",
+        )
+
+        missing_outcomes = int(
+            comparison["netImbalanceVolume"].isna().sum()
+        )
+
+        if missing_outcomes:
+            raise ValueError(
+                f"Official outcome is missing for "
+                f"{missing_outcomes} settlement periods"
+            )
+
+        time_mismatches = int(
+            (
+                comparison["outcome_start_time"]
+                != comparison["startTime"]
+            ).sum()
+        )
+
+        if time_mismatches:
+            raise ValueError(
+                f"Outcome time disagrees for "
+                f"{time_mismatches} settlement periods"
+            )
+
+        comparison["actual_system_short"] = (
+            comparison["netImbalanceVolume"] > 0
+        )
+
+        comparison["predicted_system_short"] = (
+            comparison["champion_probability"] >= 0.50
+        )
+
+        comparison["correct_at_50pct"] = (
+            comparison["actual_system_short"]
+            == comparison["predicted_system_short"]
+        )
+
+        actual = comparison["actual_system_short"].astype(float)
+        probability = comparison["champion_probability"].astype(float)
+
+        brier_score = float(
+            ((probability - actual) ** 2).mean()
+        )
+
+        summary = {
+            "mean_predicted_probability_pct": round(
+                float(probability.mean()) * 100,
+                1,
+            ),
+            "actual_short_share_pct": round(
+                float(actual.mean()) * 100,
+                1,
+            ),
+            "accuracy_at_50pct_pct": round(
+                float(
+                    comparison["correct_at_50pct"].mean()
+                ) * 100,
+                1,
+            ),
+            "daily_brier_score": round(brier_score, 4),
+        }
+
+        period_results = []
+
+        for _, row in comparison.iterrows():
+            local_time = pd.Timestamp(
+                row["startTime"]
+            ).tz_convert(LONDON)
+
+            period_results.append({
+                "settlement_period": int(
+                    row["settlementPeriod"]
+                ),
+                "start_time_local": local_time.strftime(
+                    "%Y-%m-%d %H:%M %Z"
+                ),
+                "predicted_probability_pct": round(
+                    float(row["champion_probability"]) * 100,
+                    1,
+                ),
+                "actual_system_short": bool(
+                    row["actual_system_short"]
+                ),
+                "realised_niv_mw": round(
+                    float(row["netImbalanceVolume"]),
+                    1,
+                ),
+                "correct_at_50pct": bool(
+                    row["correct_at_50pct"]
+                ),
+            })
+
+        result = {
+            "tool": "compare_with_actuals",
+            "status": "READY_FOR_HUMAN_REVIEW",
+            "result_id": _result_id(
+                "comparison",
+                {
+                    "prediction_id": prediction_id,
+                    "summary": summary,
+                },
+            ),
+            "prediction_id": prediction_id,
+            "target_date": target_date,
+            "period_count": len(comparison),
+            "summary": summary,
+            "period_results": period_results,
+            "comparison_note": (
+                "Realised NIV is shown after settlement. "
+                "The model predicted short-system probability, "
+                "not NIV magnitude."
+            ),
+            "metric_note": (
+                "These metrics describe one completed day. "
+                "They do not replace the full 2025 evaluation."
+            ),
+        }
+
+        return result
+
+    except Exception as error:
+        return {
+            "tool": "compare_with_actuals",
+            "status": "ABSTAIN",
+            "prediction_id": prediction_id,
+            "reason": str(error),
+        }
 
 def get_model_card() -> dict:
     """Return the frozen model design, test results, and limitations."""
@@ -753,5 +1072,6 @@ TOOLS = {
     "check_data": check_data,
     "predict_risk": predict_risk,
     "run_scenario": run_scenario,
+    "compare_with_actuals": compare_with_actuals,
     "get_model_card": get_model_card,
 }

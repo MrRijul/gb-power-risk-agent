@@ -12,6 +12,7 @@ The first two notebooks build a point-in-time history from Elexon. The third not
 03_train_model.ipynb     Chronological model training and evaluation
 tools.py                 Data checks, prediction, scenarios and model card
 agent.py                 One local Ollama tool-calling agent
+app.py                   Streamlit dashboard and local agent chat
 requirements.txt         Packages needed to run the notebook
 README.md                This explanation
 ```
@@ -152,7 +153,19 @@ python agent.py
 You can also give it a question directly:
 
 ```powershell
-python agent.py "Assess tomorrow and run the demand-up scenario."
+python agent.py "Assess tomorrow. What if demand rises 6% and wind falls 12%?"
 ```
 
-The local LLM chooses which tools are needed. Python enforces the order, performs every calculation, stops on missing or late data, and renders the final numbers from structured results. The agent saves its complete tool sequence in `agent_audit.json`.
+The local LLM chooses which tools are needed. Python enforces the order, performs every calculation, stops on missing or late data, and renders the final numbers from structured results. Custom scenarios are bounded to demand changes of plus or minus 10%, wind changes of plus or minus 30%, and margin changes of plus or minus 2,000 MW. The agent saves its complete tool sequence in `agent_audit.json`.
+
+For a completed historical date, the agent can also compare its point-in-time probabilities with realised Net Imbalance Volume. This is an ex-post review. The model predicts the probability of a short system, not the magnitude of NIV.
+
+## Step 5: run the dashboard
+
+Start the dashboard from the project folder:
+
+```powershell
+python -m streamlit run app.py
+```
+
+The Risk dashboard tab provides manual data checks, probability charts, realised-outcome comparison and bounded scenario sliders. The Research agent tab sends natural-language questions to the local Ollama agent and shows the tool trace. The chat tab requires Ollama on the same computer. The manual dashboard does not.

@@ -16,8 +16,8 @@ import tools as power_tools
 
 
 MODEL_NAME = "qwen3:8b"
-MAX_ROUNDS = 5
-MAX_TOOL_CALLS = 6
+MAX_ROUNDS = 7
+MAX_TOOL_CALLS = 7
 LONDON = ZoneInfo("Europe/London")
 AUDIT_FILE = Path(__file__).resolve().with_name("agent_audit.json")
 
@@ -31,16 +31,21 @@ tools for the user's question. You never calculate probabilities yourself.
 Rules:
 1. Call check_data before any date-specific prediction.
 2. Call predict_risk only with the validation_id returned by check_data.
-3. Call run_scenario only with a prediction_id returned by predict_risk.
-4. If a tool returns ABSTAIN, do not use downstream tools for that date.
+3. Call compare_with_actuals only with a prediction_id returned by predict_risk,
+   only when the user asks for realised outcomes, and only for a completed date.
+4. Call run_scenario only with a prediction_id returned by predict_risk.
+   For a natural-language sensitivity, use scenario="custom" and pass the
+   user's stated demand_change_pct, wind_change_pct, and margin_change_mw.
+   An omitted change is zero. Preserve signs exactly. Python enforces bounds.
+5. If a tool returns ABSTAIN, do not use downstream tools for that date.
    Stop unless the user explicitly supplied another target date. In that case,
    call check_data for that stated alternative and continue only if it passes.
    Never invent or silently change a target date.
-5. Use get_model_card alone for questions only about model quality.
-6. Use no more tools than the question needs.
-7. Never suggest a trade, order, position, or capital allocation.
-8. Never invent, transform, or calculate a number. Python renders the report.
-9. When the required evidence is collected, stop calling tools.
+6. Use get_model_card alone for questions only about model quality.
+7. Use no more tools than the question needs.
+8. Never suggest a trade, order, position, or capital allocation.
+9. Never invent, transform, or calculate a number. Python renders the report.
+10. When the required evidence is collected, stop calling tools.
 """.strip()
 
 
@@ -54,6 +59,14 @@ def _result_reference(result: dict) -> str | None:
         if result.get(key):
             return result[key]
     return None
+
+
+def _agent_view(result: dict) -> dict:
+    """Keep full evidence in the audit but send compact results to Ollama."""
+    compact = dict(result)
+    compact.pop("period_predictions", None)
+    compact.pop("period_results", None)
+    return compact
 
 
 def _explicit_dates(question: str) -> list[str]:
@@ -155,18 +168,54 @@ def _render_report(question: str, steps: list[dict]) -> str:
                 f"daily rank {period['daily_risk_rank']}"
             )
 
+    comparison = results.get("compare_with_actuals")
+    if comparison:
+        summary = comparison["summary"]
+        lines.extend([
+            "",
+            "Forecast versus actual outcome",
+            f"Mean predicted probability: {summary['mean_predicted_probability_pct']}%",
+            f"Actual short-period share: {summary['actual_short_share_pct']}%",
+            f"Accuracy at 50% threshold: {summary['accuracy_at_50pct_pct']}%",
+            f"Daily Brier score: {summary['daily_brier_score']}",
+            f"Evidence: {comparison['result_id']}",
+        ])
+
     scenario = results.get("run_scenario")
     if scenario:
         summary = scenario["summary"]
+        assumptions = scenario.get("assumptions", {})
+        if scenario["scenario"] == "custom":
+            assumption_text = (
+                f"demand {assumptions.get('demand_change_pct', 0):+g}%, "
+                f"wind {assumptions.get('wind_change_pct', 0):+g}%, "
+                f"margin {assumptions.get('margin_change_mw', 0):+g} MW"
+            )
+        else:
+            assumption_text = ", ".join(
+                f"{name} multiplier {value:g}"
+                for name, value in assumptions.items()
+            )
         lines.extend([
             "",
-            f"Scenario: {scenario['scenario']}",
+            "Model sensitivity scenario",
+            f"Scenario assumptions: {assumption_text}",
             f"Baseline mean probability: {summary['baseline_mean_probability_pct']}%",
             f"Scenario mean probability: {summary['scenario_mean_probability_pct']}%",
             f"Mean change: {summary['mean_change_pp']} percentage points",
             f"Maximum absolute period change: {summary['maximum_absolute_change_pp']} percentage points",
             f"Evidence: {scenario['result_id']}",
+            "",
+            "Most affected settlement periods",
         ])
+        for period in scenario["most_changed_periods"]:
+            lines.append(
+                f"SP{period['settlement_period']}: "
+                f"{period['baseline_probability_pct']}% to "
+                f"{period['scenario_probability_pct']}% "
+                f"({period['change_pp']:+g} pp)"
+            )
+        lines.append(scenario["method_note"])
 
     card = results.get("get_model_card")
     if card:
@@ -284,7 +333,7 @@ def run_agent(question: str, chat_function=None) -> tuple[str, dict]:
             messages.append({
                 "role": "tool",
                 "tool_name": name,
-                "content": json.dumps(result, default=str),
+                "content": json.dumps(_agent_view(result), default=str),
             })
 
             if result.get("status") == "ABSTAIN":
