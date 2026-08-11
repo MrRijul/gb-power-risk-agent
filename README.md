@@ -1,7 +1,7 @@
 # GB Power Imbalance Risk Agent
 I built this project to explore a practical question: using only information available at 16:00 on the previous day, can public Elexon forecasts help identify which GB settlement periods are more likely to be short?
 
-Future iterations will build on this, to estimate the magnitude of imbalance. Currently, this just calculates probabilities of imbalance in the system.
+Future iterations will build on this to estimate the magnitude of imbalance. Currently, this just calculates probabilities of imbalance in the system.
 
 Section "Method and File Guide" in this README details how to set this up locally. For a quick overview of its use cases, you may use the link provided below:
 
@@ -12,9 +12,9 @@ The model combines demand, wind generation, system margin, indicated imbalance a
 
 I trained the candidate models on 2022–2023, used 2024 to select between Extra Trees and penalised logistic regression, and kept 2025 untouched for the final out-of-sample test.
 
-On the 2025 test set, Extra Trees achieved an AUC of 0.632 and improved the Brier score by 5.7% relative to a constant probability forecast. This is a useful but moderate forecasting result.
+On the 2025 test set, Extra Trees achieved an AUC of 0.632 and improved the Brier score by 5.7% relative to a constant probability forecast. This is a useful but moderate forecasting result, the main purpose of the project is to show how an agentic layer turns the model into a repeatable research workflow. 
 
-The main purpose of the project is to show how an agentic layer turns the model into a repeatable research workflow. It checks whether the data were genuinely available at the forecast cutoff, runs the model and bounded scenarios, compares historical forecasts with realised outcomes, and records every tool call in an audit trace. The language model coordinates the workflow, while deterministic Python produces every calculation.
+The agent can check whether the data was genuinely available at the forecast cutoff (to avoid lookahead bias), runs the model while allowing for scenario analysis, compares historical forecasts with realised outcomes, and records every tool call in an audit trace. The language model coordinates the workflow, while deterministic Python produces every calculation.
 
 ## Method and File Guide
 
