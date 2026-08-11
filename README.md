@@ -2,6 +2,7 @@
 I built this project to explore a practical question: using only information available at 16:00 on the previous day, can public Elexon forecasts help identify which GB settlement periods are more likely to be short?
 
 ##Project Highlights
+
 The model combines demand, wind generation, system margin, indicated imbalance and time-of-day information. I chose an Extremely Randomized Trees classifier because these variables are likely to interact in nonlinear ways. I also required at least 100 observations in every terminal leaf to reduce the risk of fitting narrow, unstable half-hour patterns.
 
 I trained the candidate models on 2022–2023, used 2024 to select between Extra Trees and penalised logistic regression, and kept 2025 untouched for the final out-of-sample test.
@@ -11,6 +12,7 @@ On the 2025 test set, Extra Trees achieved an AUC of 0.632 and improved the Brie
 The main purpose of the project is to show how an agentic layer turns the model into a repeatable research workflow. It checks whether the data were genuinely available at the forecast cutoff, runs the model and bounded scenarios, compares historical forecasts with realised outcomes, and records every tool call in an audit trace. The language model coordinates the workflow, while deterministic Python produces every calculation.
 
 ##ML Note
+
 I use an an Extremely Randomized Trees classifier to model a likely non-linear and interaction dependent relationship between demand, wind generation, margin, indicated imbalance and time of day. I used a conservative minimum leaf size of 100 to avoid fitting narrow half-hour patterns. The model was selected against penalised logistic regression using 2024 Brier score and then evaluated on an untouched 2025 test set. 
 
 I train models on 2022-2023, 2024 to select the model, and 2025 was an out of sample test, to see if it holds up.
