@@ -1,7 +1,7 @@
 # GB Power Imbalance Risk Agent
 I built this project to explore a practical question: using only information available at 16:00 on the previous day, can public Elexon forecasts help identify which GB settlement periods are more likely to be short?
 
-Future iterations will build on this, to estimate the magnitude of imbalance. Currently, this one just calculates probabilities of imbalance in the system.
+Future iterations will build on this, to estimate the magnitude of imbalance. Currently, this just calculates probabilities of imbalance in the system.
 
 Section "Method and File Guide" in this README is to set it up locally. For a quick overview of it's usecase, you may use the link provided below:
 
