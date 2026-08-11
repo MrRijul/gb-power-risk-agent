@@ -16,7 +16,7 @@ On the 2025 test set, Extra Trees achieved an AUC of 0.632 and improved the Brie
 
 The agent can check whether the data was genuinely available at the forecast cutoff (to avoid lookahead bias), runs the model while allowing for scenario analysis, compares historical forecasts with realised outcomes, and records every tool call in an audit trace. The language model coordinates the workflow, while deterministic Python produces every calculation.
 
-## Method and File Guide
+## Method and File Guide (USEFUL FOR LOCAL SETUP/REBUILDING)
 
 The first two notebooks build a point-in-time history from Elexon. The third notebook trains a transparent benchmark and a nonlinear probability model, then evaluates them on a later year.
 
