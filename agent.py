@@ -1,10 +1,11 @@
-"""One local Ollama agent for the GB power risk tools."""
+"""One bounded agent for the GB power risk tools."""
 
 from __future__ import annotations
 
 import hashlib
 import inspect
 import json
+import os
 import re
 import sys
 from datetime import datetime, timedelta
@@ -15,7 +16,8 @@ from zoneinfo import ZoneInfo
 import tools as power_tools
 
 
-MODEL_NAME = "qwen3:8b"
+OLLAMA_MODEL = "qwen3:8b"
+GROQ_MODEL = "llama-3.3-70b-versatile"
 MAX_ROUNDS = 7
 MAX_TOOL_CALLS = 7
 LONDON = ZoneInfo("Europe/London")
@@ -62,7 +64,7 @@ def _result_reference(result: dict) -> str | None:
 
 
 def _agent_view(result: dict) -> dict:
-    """Keep full evidence in the audit but send compact results to Ollama."""
+    """Keep full evidence in the audit but send compact results to the LLM."""
     compact = dict(result)
     compact.pop("period_predictions", None)
     compact.pop("period_results", None)
@@ -246,15 +248,104 @@ def _save_audit(audit: dict) -> None:
     )
 
 
-def run_agent(question: str, chat_function=None) -> tuple[str, dict]:
-    """Run the bounded tool-calling loop and return the grounded report."""
-    if chat_function is None:
+PARAMETER_SCHEMAS = {
+    "target_date": {
+        "type": "string",
+        "description": "Settlement date in YYYY-MM-DD format.",
+    },
+    "validation_id": {
+        "type": "string",
+        "description": "Identifier returned by check_data for the same date.",
+    },
+    "prediction_id": {
+        "type": "string",
+        "description": "Identifier returned by predict_risk.",
+    },
+    "scenario": {
+        "type": "string",
+        "enum": ["custom"],
+        "description": "Use custom for a bounded model sensitivity.",
+    },
+    "demand_change_pct": {
+        "type": "number",
+        "minimum": -10,
+        "maximum": 10,
+        "description": "Demand change in percent, from -10 to +10.",
+    },
+    "wind_change_pct": {
+        "type": "number",
+        "minimum": -30,
+        "maximum": 30,
+        "description": "Wind-generation change in percent, from -30 to +30.",
+    },
+    "margin_change_mw": {
+        "type": "number",
+        "minimum": -2000,
+        "maximum": 2000,
+        "description": "Margin change in MW, from -2000 to +2000.",
+    },
+}
+
+
+def _groq_tools() -> list[dict]:
+    """Convert the existing Python tool registry into Groq JSON schemas."""
+    schemas = []
+    for name, function in power_tools.TOOLS.items():
+        signature = inspect.signature(function)
+        properties = {}
+        required = []
+        for parameter_name, parameter in signature.parameters.items():
+            properties[parameter_name] = dict(
+                PARAMETER_SCHEMAS[parameter_name]
+            )
+            if parameter.default is inspect.Parameter.empty:
+                required.append(parameter_name)
+            else:
+                properties[parameter_name]["default"] = parameter.default
+
+        description = (inspect.getdoc(function) or name).splitlines()[0]
+        schemas.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                    "additionalProperties": False,
+                },
+            },
+        })
+    return schemas
+
+
+def _select_backend(chat_function=None):
+    """Use Groq when configured, otherwise retain the local Ollama path."""
+    if chat_function is not None:
+        return "ollama", OLLAMA_MODEL, chat_function
+
+    if os.getenv("GROQ_API_KEY"):
         try:
-            from ollama import chat as chat_function
+            from groq import Groq
         except ImportError as error:
             raise RuntimeError(
-                "The ollama Python package is missing. Run: pip install ollama"
+                "The groq package is missing. Run: pip install groq"
             ) from error
+        return "groq", GROQ_MODEL, Groq()
+
+    try:
+        from ollama import chat
+    except ImportError as error:
+        raise RuntimeError(
+            "No GROQ_API_KEY was found and the ollama package is missing."
+        ) from error
+    return "ollama", OLLAMA_MODEL, chat
+
+
+def run_agent(question: str, chat_function=None) -> tuple[str, dict]:
+    """Run the bounded tool-calling loop and return the grounded report."""
+    provider, model_name, model_client = _select_backend(chat_function)
 
     now = datetime.now(LONDON)
     tomorrow = (now.date() + timedelta(days=1)).isoformat()
@@ -273,19 +364,31 @@ def run_agent(question: str, chat_function=None) -> tuple[str, dict]:
 
     for _ in range(MAX_ROUNDS):
         try:
-            response = chat_function(
-                model=MODEL_NAME,
-                messages=messages,
-                tools=list(power_tools.TOOLS.values()),
-                think=False,
-                options={"temperature": 0},
-            )
+            if provider == "groq":
+                response = model_client.chat.completions.create(
+                    model=model_name,
+                    messages=messages,
+                    tools=_groq_tools(),
+                    tool_choice="auto",
+                    parallel_tool_calls=False,
+                    temperature=0,
+                )
+                response_message = response.choices[0].message
+            else:
+                response = model_client(
+                    model=model_name,
+                    messages=messages,
+                    tools=list(power_tools.TOOLS.values()),
+                    think=False,
+                    options={"temperature": 0},
+                )
+                response_message = response.message
         except Exception as error:
-            stop_reason = f"Ollama request failed: {error}"
+            stop_reason = f"{provider.title()} request failed: {error}"
             break
 
-        messages.append(response.message)
-        calls = response.message.tool_calls or []
+        messages.append(response_message)
+        calls = response_message.tool_calls or []
         if not calls:
             stop_reason = "evidence_complete"
             break
@@ -296,7 +399,16 @@ def run_agent(question: str, chat_function=None) -> tuple[str, dict]:
                 break
 
             name = call.function.name
-            arguments = dict(call.function.arguments or {})
+            try:
+                if provider == "groq":
+                    arguments = json.loads(call.function.arguments or "{}")
+                else:
+                    arguments = dict(call.function.arguments or {})
+                if not isinstance(arguments, dict):
+                    raise ValueError("arguments must be a JSON object")
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                stop_reason = f"Invalid tool arguments blocked: {name}: {error}"
+                break
             call_key = (name, json.dumps(arguments, sort_keys=True, default=str))
             if call_key in seen_calls:
                 stop_reason = f"Repeated tool call blocked: {name}"
@@ -330,11 +442,16 @@ def run_agent(question: str, chat_function=None) -> tuple[str, dict]:
                 "result": result,
             }
             steps.append(step)
-            messages.append({
+            tool_message = {
                 "role": "tool",
-                "tool_name": name,
                 "content": json.dumps(_agent_view(result), default=str),
-            })
+            }
+            if provider == "groq":
+                tool_message["tool_call_id"] = call.id
+                tool_message["name"] = name
+            else:
+                tool_message["tool_name"] = name
+            messages.append(tool_message)
 
             if result.get("status") == "ABSTAIN":
                 attempted_dates = {
@@ -380,7 +497,8 @@ def run_agent(question: str, chat_function=None) -> tuple[str, dict]:
             "started": now.isoformat(),
         }),
         "started_at": now.isoformat(),
-        "ollama_model": MODEL_NAME,
+        "llm_provider": provider,
+        "llm_model": model_name,
         "system_prompt_hash": _hash_payload(SYSTEM_POLICY),
         "question": question,
         "steps": steps,
