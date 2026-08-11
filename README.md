@@ -6,7 +6,7 @@ Future iterations will build on this to estimate the magnitude of imbalance. Cur
 Section "Method and File Guide" in this README details how to set this up locally. For a quick overview of its use cases, you may use the link provided below:
 
 
-## Project Highlights
+## Project Summary
 
 The model combines demand, wind generation, system margin, indicated imbalance and time-of-day information. I chose an Extremely Randomized Trees classifier because these variables are likely to interact in nonlinear ways. I also required at least 100 observations in every terminal leaf to reduce the risk of fitting narrow, unstable half-hour patterns.
 
