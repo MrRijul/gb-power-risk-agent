@@ -13,7 +13,7 @@ For a selected settlement date, the workflow:
 1. Fetches the demand, wind, system-margin and indicated-imbalance forecasts available by the D-1 16:00 London cutoff.
 2. Checks publication times, missing values, stale forecasts, duplicate keys and the expected 46, 48 or 50 settlement periods.
 3. Stops if a critical data check fails.
-4. Uses a frozen Extra Trees model to estimate short-system probability for every settlement period.
+4. Uses a frozen Extremely Randomised Trees model to estimate short-system probability for every settlement period.
 5. Optionally runs bounded demand, wind and margin sensitivity scenarios.
 6. For a completed date, fetches realised Net Imbalance Volume and compares the forecast with the outcome.
 7. Records the tool sequence, inputs, outputs and stop reason in an audit trace.
