@@ -303,7 +303,6 @@ with st.sidebar:
         st.write(f"2025 test AUC: {metrics['auc']:.3f}")
     if "brier" in metrics:
         st.write(f"2025 Brier score: {metrics['brier']:.3f}")
-    st.caption("Decision support only. This is not a trading model.")
 
 agent_tab, dashboard_tab = st.tabs([
     "Research agent",
@@ -370,7 +369,7 @@ with dashboard_tab:
         st.header("Model sensitivity scenario")
         st.caption(
             "Adjust selected inputs while holding the remaining model inputs "
-            "constant. These are sensitivities, not new market forecasts."
+            "constant."
         )
 
         first, second, third = st.columns(3)
@@ -420,8 +419,7 @@ with agent_tab:
 
     st.caption(
         "The agent chooses the relevant tools, but Python produces every "
-        "number. This model predicts Net Imbalance probability and NOT " \
-        "Net Imbalance Volume magnitude or trade recommendations."
+        "number."
     )
 
     st.info(
