@@ -17,7 +17,7 @@ import tools as power_tools
 
 
 OLLAMA_MODEL = "qwen3:8b"
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "openai/gpt-oss-120b"
 MAX_ROUNDS = 7
 MAX_TOOL_CALLS = 7
 LONDON = ZoneInfo("Europe/London")
