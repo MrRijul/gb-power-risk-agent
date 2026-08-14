@@ -242,7 +242,6 @@ def render_scenario(result: dict) -> None:
     )
     st.subheader("Most affected settlement periods")
     st.dataframe(affected, hide_index=True, width="stretch")
-    st.info(result["method_note"])
     st.caption(f"Evidence: {result['result_id']}")
 
 
